@@ -1,0 +1,6 @@
+@echo off
+echo Memeriksa instalasi package...
+pip install -r requirements.txt
+echo Menjalankan Dashboard SISTER...
+streamlit run app.py
+pause
