@@ -10,7 +10,7 @@ class SisterAPIClient:
             self.base_url = "https://sister-api.kemdiktisaintek.go.id/ws.php/1.0"
         self.token = None
         
-        # Menggunakan Session untuk mempertahankan header browser lengkap (Bypass 403 WAF)
+        # Session dengan header lengkap untuk bypass Cloudflare WAF
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
@@ -75,7 +75,7 @@ class SisterAPIClient:
 
     def get_sdm_data(self, category_endpoint: str, id_sdm: Optional[str] = None) -> Any:
         """
-        Mengambil data detail berdasarkan endpoint kategori dan id_sdm (jika diperlukan)
+        Mengambil data detail berdasarkan endpoint kategori (GET Request)
         """
         if not self.token:
             raise ValueError("Belum terautentikasi.")
@@ -91,3 +91,30 @@ class SisterAPIClient:
             return response.json()
         else:
             return {"error": f"HTTP {response.status_code}", "detail": response.text}
+
+    def post_sdm_data(self, category_endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Mengirim / Push Data Baru ke SISTER (POST Request)
+        """
+        if not self.token:
+            raise ValueError("Belum terautentikasi.")
+            
+        url = f"{self.base_url}{category_endpoint}"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = self.session.post(url, data=json.dumps(payload), headers=headers, timeout=60)
+            return {
+                "status_code": response.status_code,
+                "success": response.status_code in [200, 201],
+                "response": response.json() if response.headers.get('content-type', '').startswith('application/json') else response.text
+            }
+        except Exception as e:
+            return {
+                "status_code": 500,
+                "success": False,
+                "response": str(e)
+            }
