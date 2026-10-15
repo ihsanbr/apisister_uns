@@ -58,6 +58,31 @@ def clean_dataframe_for_excel(df: pd.DataFrame) -> pd.DataFrame:
         
     return df_clean
 
+def get_sdm_lookup_dict():
+    """
+    Membuat pemetaan lookup id_sdm dan nidn ke data identitas dosen.
+    """
+    lookup_id = {}
+    lookup_nidn = {}
+    if st.session_state.sdm_list:
+        for item in st.session_state.sdm_list:
+            s_id = str(item.get("id_sdm", "")).strip()
+            s_nama = item.get("nama") or item.get("nama_sdm") or item.get("nama_dosen") or "Tanpa Nama"
+            s_nidn = str(item.get("nidn", "")).strip() if item.get("nidn") else "-"
+            s_nip = str(item.get("nip", "")).strip() if item.get("nip") else "-"
+            
+            info = {
+                "nama_sdm": s_nama,
+                "nidn": s_nidn,
+                "nip": s_nip,
+                "id_sdm": s_id
+            }
+            if s_id:
+                lookup_id[s_id] = info
+            if s_nidn and s_nidn != "-":
+                lookup_nidn[s_nidn] = info
+    return lookup_id, lookup_nidn
+
 st.markdown('<div class="main-header">Dashboard Konektor API SISTER Kemdiktisaintek</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Aplikasi lengkap untuk Tarik Data (GET) & Push Data (POST) dari/ke API SISTER Kemdiktisaintek.</div>', unsafe_allow_html=True)
 
@@ -240,6 +265,8 @@ with tab3:
     if not st.session_state.is_authenticated:
         st.warning("Anda perlu terhubung/authorize ke API SISTER terlebih dahulu.")
     else:
+        lookup_id, lookup_nidn = get_sdm_lookup_dict()
+        
         col_cat, col_mode = st.columns(2)
         
         with col_cat:
@@ -351,9 +378,30 @@ with tab3:
                         else:
                             st.success("Data berhasil ditarik!")
                             
+                            sdm_info = lookup_id.get(str(target_id_sdm).strip(), {
+                                "nama_sdm": "Tanpa Nama",
+                                "nidn": "-",
+                                "nip": "-",
+                                "id_sdm": target_id_sdm
+                            })
+                            
                             if isinstance(res_data, list):
                                 if len(res_data) > 0:
-                                    df_res = pd.DataFrame(res_data)
+                                    enriched_list = []
+                                    for row in res_data:
+                                        if isinstance(row, dict):
+                                            rec = {
+                                                "nama_sdm": sdm_info.get("nama_sdm"),
+                                                "nidn": sdm_info.get("nidn"),
+                                                "nip": sdm_info.get("nip"),
+                                                "id_sdm": sdm_info.get("id_sdm")
+                                            }
+                                            rec.update(row)
+                                            enriched_list.append(rec)
+                                        else:
+                                            enriched_list.append(row)
+                                            
+                                    df_res = pd.DataFrame(enriched_list)
                                     st.dataframe(df_res, use_container_width=True)
                                     df_res_clean = clean_dataframe_for_excel(df_res)
                                     
@@ -390,9 +438,12 @@ with tab3:
                     total_sdm = len(target_sdm_list)
                     
                     for idx, sdm in enumerate(target_sdm_list):
-                        sdm_id = sdm.get("id_sdm")
-                        sdm_nama = sdm.get("nama", "Tanpa Nama")
-                        sdm_nidn = sdm.get("nidn", "-")
+                        sdm_id = str(sdm.get("id_sdm", "")).strip()
+                        
+                        sdm_info = lookup_id.get(sdm_id, {})
+                        sdm_nama = sdm_info.get("nama_sdm") or sdm.get("nama") or sdm.get("nama_sdm") or "Tanpa Nama"
+                        sdm_nidn = sdm_info.get("nidn") or sdm.get("nidn") or "-"
+                        sdm_nip = sdm_info.get("nip") or sdm.get("nip") or "-"
                         
                         status_text.text(f"Processing ({idx+1}/{total_sdm}): {sdm_nama} (NIDN: {sdm_nidn})...")
                         progress_bar.progress((idx + 1) / total_sdm)
@@ -406,6 +457,7 @@ with tab3:
                                         record = {
                                             "nama_sdm": sdm_nama,
                                             "nidn": sdm_nidn,
+                                            "nip": sdm_nip,
                                             "id_sdm": sdm_id
                                         }
                                         record.update(row)
@@ -414,6 +466,7 @@ with tab3:
                                 record = {
                                     "nama_sdm": sdm_nama,
                                     "nidn": sdm_nidn,
+                                    "nip": sdm_nip,
                                     "id_sdm": sdm_id
                                 }
                                 record.update(res_data)
@@ -427,6 +480,18 @@ with tab3:
                     
                     if all_combined_data:
                         df_all = pd.DataFrame(all_combined_data)
+                        
+                        # Fallback enrichment
+                        for i in range(len(df_all)):
+                            curr_id = str(df_all.at[i, "id_sdm"]).strip() if "id_sdm" in df_all.columns else ""
+                            curr_nidn = str(df_all.at[i, "nidn"]).strip() if "nidn" in df_all.columns else ""
+                            
+                            if (pd.isna(df_all.at[i, "nama_sdm"]) or df_all.at[i, "nama_sdm"] in ["Tanpa Nama", "", None]):
+                                if curr_id in lookup_id:
+                                    df_all.at[i, "nama_sdm"] = lookup_id[curr_id]["nama_sdm"]
+                                elif curr_nidn in lookup_nidn:
+                                    df_all.at[i, "nama_sdm"] = lookup_nidn[curr_nidn]["nama_sdm"]
+                        
                         st.success(f"Selesai! Berhasil menarik {len(df_all)} baris data.")
                         st.dataframe(df_all, use_container_width=True)
                         
@@ -562,6 +627,6 @@ with tab5:
 
     ### 3. Push Data (POST Request)
     * Digunakan untuk memasukkan data dari aplikasi luar (misal: SIMLitabmas lokal, Sistem Repository, SIAKAD) langsung ke dalam database SISTER.
-    * Buat file Excel dengan nama kolom yang **persis sama** dengan nama atribut JSON di SISTER (misal: `id_sdm`, `judul`, `tahun_pelaksanaan`, dll).
+    * Buat file Excel dengan nama kolom yang **persis sama** dengan nama atribut JSON SISTER (misal: `id_sdm`, `judul`, `tahun_pelaksanaan`, dll).
     * Unggah file, lakukan pratinjau, lalu klik **Mulai Push Data**.
     """)
